@@ -48,7 +48,7 @@ flockd --specs <dir>
 | `--state` | Path to SQLite state database | *required* |
 | `--exec-create` | Command to create an instance | `echo 'created {name} on {node}'` |
 | `--exec-delete` | Command to delete an instance | `echo 'deleted {name} on {node}'` |
-| `--exec-health` | Command to check instance health | *(none)* |
+| `--exec-health` | Command to check instance health; if empty, uses DB status (`"running"` = healthy) | *(none)* |
 | `--scheduler` | `first-fit` or `best-fit` | `first-fit` |
 | `--nodes-file` | File listing cluster nodes (one per line) | *(none, defaults to localhost)* |
 | `--node-health-cmd` | Command to check node liveness | *(none)* |

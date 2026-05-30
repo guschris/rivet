@@ -48,7 +48,7 @@ One backend per line, format `IP:PORT`. Lines starting with `#` are comments. Bl
 
 1. Polls the backends file every `--interval` seconds.
 2. Detects changes by hashing the backend list.
-3. Creates a custom iptables chain `IPTLB-<vip-hyphenated>` in the `nat` table.
+3. Creates a custom iptables chain `IPTLB-<port>-<vip-hyphenated>` in the `nat` table.
 4. Adds a jump rule in `PREROUTING`: traffic to `--vip:--port` jumps to the custom chain.
 5. Populates the chain with `statistic --mode nth` rules for round-robin DNAT.
 6. On change, flushes and repopulates the chain.

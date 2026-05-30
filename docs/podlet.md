@@ -24,7 +24,7 @@ podlet --name <name>
       [--mem <limit>]
       [--ports <container>:<host>]...
       [--tcp-check :port]
-      [--http-check /path]
+      [--http-check :port/path]
       [--exec-check "cmd"]
       [--restart always|on-failure]
       [--max-restarts N]
@@ -86,13 +86,24 @@ When `--cpu` or `--mem` is specified, `podlet` creates a cgroup `/sys/fs/cgroup/
 
 ## Systemd Integration
 
-For production use, wrap `podlet` with systemd for auto-restart on crash:
+For production use, wrap `podlet` with systemd for auto-restart on crash. Podlet's own `--restart` flag should **not** be used when systemd manages restarts.
 
 ```ini
 # /etc/systemd/system/podlet@.service
+[Unit]
+Description=Podlet supervised workload: %i
+After=network.target
+
 [Service]
-ExecStart=/usr/local/bin/podlet --name %i --restart always -- %i
-Restart=always
+Type=simple
+ExecStart=/usr/local/bin/podlet --name %i --drain-timeout 30s -- %i
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=20
+StartLimitIntervalSec=120
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 Start with: `systemctl start podlet@myapp`

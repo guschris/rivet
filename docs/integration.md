@@ -149,12 +149,12 @@ To roll out a new image, just edit the spec:
 sed -i 's/nginx:alpine/nginx:1.25/' /mnt/state/specs/prod/frontend.yaml
 ```
 
-[flockd](flockd.md) detects the hash change within 5 seconds and:
+[flockd](flockd.md) detects the hash change within 5 seconds and, in a single reconciliation pass:
 
 1. Creates new instances with the updated spec.
-2. Waits for them to become healthy (via `--exec-health`).
-3. Drains old instances.
-4. Deletes old instances.
+2. Immediately drains and deletes all old instances (those with a different spec hash).
+
+Health-based gating happens in subsequent reconciliation cycles: if not enough new instances are healthy yet, flockd creates more on the next pass. If too many instances exist, it scales down.
 
 [iptlb](iptlb.md) picks up the updated backends file and shifts traffic without dropping connections.
 
