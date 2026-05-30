@@ -1,0 +1,11 @@
+[Unit]
+Description=Podlet heartbeat updater for %H
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/podlet-heartbeat
+User=root
+
+[Install]
+WantedBy=timers.target

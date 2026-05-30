@@ -1,0 +1,15 @@
+[Unit]
+Description=flockd declarative reconciler (HA wrapper)
+After=network.target remote-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/flockd-wrapper
+Restart=always
+RestartSec=3
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

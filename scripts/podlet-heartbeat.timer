@@ -1,0 +1,11 @@
+[Unit]
+Description=Podlet heartbeat timer
+Requires=podlet-heartbeat.service
+
+[Timer]
+OnUnitActiveSec=5s
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

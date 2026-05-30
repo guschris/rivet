@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+SPECS_DIR="${SPECS_DIR:-/mnt/state/specs}"
+
+if [ ! -d "${SPECS_DIR}/.git" ]; then
+    echo "git-sync: ${SPECS_DIR} is not a git repository, skipping" >&2
+    exit 0
+fi
+
+cd "${SPECS_DIR}"
+git fetch origin
+git reset --hard "origin/$(git rev-parse --abbrev-ref HEAD)"

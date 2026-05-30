@@ -1,0 +1,23 @@
+#!/bin/bash
+# flockd wrapper: leader election via flock on NFSv4
+set -euo pipefail
+
+LOCK_FILE="${LOCK_FILE:-/mnt/state/flockd.lock}"
+STATE_DIR="${STATE_DIR:-/mnt/state}"
+SPECS_DIR="${SPECS_DIR:-/mnt/state/specs}"
+NODES_FILE="${NODES_FILE:-/etc/flockd/nodes}"
+EXEC_CREATE="${EXEC_CREATE:-ssh {node} systemctl start podlet@{name}}"
+EXEC_DELETE="${EXEC_DELETE:-ssh {node} systemctl stop podlet@{name}}"
+EXEC_HEALTH="${EXEC_HEALTH:-test -f /mnt/state/heartbeats/{name}}"
+
+exec flock -n "${LOCK_FILE}" -c "
+    exec /usr/local/bin/flockd \
+        --specs '${SPECS_DIR}' \
+        --state '${STATE_DIR}/state.db' \
+        --nodes-file '${NODES_FILE}' \
+        --exec-create '${EXEC_CREATE}' \
+        --exec-delete '${EXEC_DELETE}' \
+        --exec-health '${EXEC_HEALTH}' \
+        --scheduler first-fit \
+        --interval 5
+"

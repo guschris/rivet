@@ -1,0 +1,12 @@
+[Unit]
+Description=Git spec sync for flockd
+After=network.target remote-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/git-sync
+User=root
+Environment=SPECS_DIR=/mnt/state/specs
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,16 @@
+# Rust build output
+/target
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+.env.local

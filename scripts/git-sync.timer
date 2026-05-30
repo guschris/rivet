@@ -1,0 +1,11 @@
+[Unit]
+Description=Git spec sync timer
+Requires=git-sync.service
+
+[Timer]
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
