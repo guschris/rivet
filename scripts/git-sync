@@ -9,5 +9,7 @@ if [ ! -d "${SPECS_DIR}/.git" ]; then
 fi
 
 cd "${SPECS_DIR}"
+git stash
 git fetch origin
 git reset --hard "origin/$(git rev-parse --abbrev-ref HEAD)"
+git stash drop

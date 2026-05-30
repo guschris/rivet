@@ -7,7 +7,7 @@ mod state;
 
 use clap::Parser;
 use scheduler::Scheduler;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::select;
@@ -46,9 +46,6 @@ struct Cli {
 
     #[arg(long)]
     lock_file: Option<PathBuf>,
-
-    #[arg(long)]
-    max_load_per_node: Option<u32>,
 }
 
 #[tokio::main]
@@ -89,7 +86,7 @@ async fn main() {
     let mut ticker = time::interval(Duration::from_secs(cli.interval));
     ticker.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
 
-    let mut last_spec_hashes: HashMap<String, String> = HashMap::new();
+    let mut last_spec_hashes: BTreeMap<String, String> = BTreeMap::new();
     let mut sigterm = signal(SignalKind::terminate()).expect("failed to set up SIGTERM handler");
     let mut sigint = signal(SignalKind::interrupt()).expect("failed to set up SIGINT handler");
 
@@ -116,7 +113,13 @@ async fn main() {
 
         let mut changed = false;
         for (name, s) in &specs {
-            let hash = spec::hash_spec(s);
+            let hash = match spec::hash_spec(s) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("flockd: hash error for '{}': {}", name, e);
+                    continue;
+                }
+            };
             let prev = last_spec_hashes.get(name).cloned().unwrap_or_default();
             if hash != prev {
                 changed = true;

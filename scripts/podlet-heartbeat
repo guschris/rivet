@@ -5,4 +5,5 @@ STATE_DIR="${STATE_DIR:-/mnt/state}"
 HOSTNAME="${HOST:-$(hostname)}"
 
 mkdir -p "${STATE_DIR}/heartbeats"
-date +%s > "${STATE_DIR}/heartbeats/${HOSTNAME}"
+date +%s > "${STATE_DIR}/heartbeats/${HOSTNAME}.tmp"
+mv "${STATE_DIR}/heartbeats/${HOSTNAME}.tmp" "${STATE_DIR}/heartbeats/${HOSTNAME}"

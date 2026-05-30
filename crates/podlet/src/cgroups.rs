@@ -43,3 +43,8 @@ pub fn assign_pid(name: &str, pid: u32) -> Result<(), String> {
 
     Ok(())
 }
+
+pub fn cleanup_cgroup(name: &str) {
+    let dir = cgroup_path(name);
+    let _ = fs::remove_dir(&dir);
+}

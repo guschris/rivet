@@ -40,7 +40,7 @@ pub fn schedule(
     };
 
     if let Some(node) = sorted.first() {
-        let instance_id = format!("{}-{:04x}", spec_name, next_index);
+        let instance_id = format!("{}-{:08x}", spec_name, next_index);
         return Some(ScheduleResult {
             node: (*node).clone(),
             instance_id,

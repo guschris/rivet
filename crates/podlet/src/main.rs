@@ -2,6 +2,7 @@ use clap::Parser;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
+use std::os::unix::process::ExitStatusExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::select;
@@ -173,6 +174,14 @@ fn emit_state(state: &State) {
 async fn main() {
     let cli = Cli::parse();
 
+    if !is_valid_name(&cli.name) {
+        eprintln!(
+            "podlet: invalid --name '{}': must be 1-63 characters, contain only [a-zA-Z0-9_.-], not start with '.', and not contain '..'",
+            cli.name
+        );
+        std::process::exit(1);
+    }
+
     if cli.command.is_empty() {
         eprintln!("podlet: no command specified (use -- before the command)");
         std::process::exit(1);
@@ -266,7 +275,13 @@ async fn main() {
                 _ = child_exited(&mut child) => {
                     match child.try_wait() {
                         Ok(Some(status)) => {
-                            let code = status.code().unwrap_or(-1);
+                            let code = if let Some(c) = status.code() {
+                                c
+                            } else {
+                                let sig = status.signal().unwrap_or(0);
+                                eprintln!("podlet: child killed by signal {}", sig);
+                                128 + sig
+                            };
                             exit_code = code;
                             state.status = "exited".into();
                             state.pid = None;
@@ -298,6 +313,9 @@ async fn main() {
                     state.pid = None;
                     state.health = "unknown".into();
                     emit_state(&state);
+                    if cgroups_enabled {
+                        cgroups::cleanup_cgroup(&cli.name);
+                    }
                     return;
                 }
                 _ = sigint.recv() => {
@@ -308,6 +326,9 @@ async fn main() {
                     state.pid = None;
                     state.health = "unknown".into();
                     emit_state(&state);
+                    if cgroups_enabled {
+                        cgroups::cleanup_cgroup(&cli.name);
+                    }
                     return;
                 }
             }
@@ -336,6 +357,9 @@ async fn main() {
         time::sleep(Duration::from_secs(1)).await;
     }
 
+    if cgroups_enabled {
+        cgroups::cleanup_cgroup(&cli.name);
+    }
     std::process::exit(exit_code);
 }
 
@@ -462,4 +486,15 @@ async fn child_exited(child: &mut tokio::process::Child) {
             Err(_) => return,
         }
     }
+}
+
+fn is_valid_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 63 {
+        return false;
+    }
+    if name.starts_with('.') || name.contains("..") {
+        return false;
+    }
+    name.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
 }

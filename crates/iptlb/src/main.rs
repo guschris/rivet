@@ -40,7 +40,7 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let chain_name = rules::chain_name(&cli.vip);
+    let chain_name = rules::chain_name(&cli.vip, cli.port);
     let manager = rules::RuleManager::new();
 
     manager.ensure_chain(&chain_name).unwrap_or_else(|e| {

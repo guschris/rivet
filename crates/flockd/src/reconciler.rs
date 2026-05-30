@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::exec;
@@ -15,7 +15,7 @@ pub fn timestamp() -> String {
 
 pub fn reconcile(
     db: &StateDB,
-    specs: &HashMap<String, Spec>,
+    specs: &BTreeMap<String, Spec>,
     nodes: &[String],
     scheduler: &Scheduler,
     exec_create_template: &str,
@@ -31,7 +31,13 @@ pub fn reconcile(
     collect_garbage(db, specs, exec_delete_template, &mut actions);
 
     for spec in specs.values() {
-        let current_hash = hash_spec(spec);
+        let current_hash = match hash_spec(spec) {
+            Ok(h) => h,
+            Err(e) => {
+                actions.push(format!("hash error for '{}': {}", spec.name, e));
+                continue;
+            }
+        };
 
         let instances = db.get_instances(&spec.name).unwrap_or_else(|e| {
             actions.push(format!("db error loading instances for '{}': {}", spec.name, e));
@@ -212,7 +218,7 @@ pub fn reconcile(
 
 fn collect_garbage(
     db: &StateDB,
-    specs: &HashMap<String, Spec>,
+    specs: &BTreeMap<String, Spec>,
     exec_delete_template: &str,
     actions: &mut Vec<String>,
 ) {
@@ -224,7 +230,7 @@ fn collect_garbage(
         }
     };
 
-    let mut orphaned_specs: HashMap<String, Vec<Instance>> = HashMap::new();
+    let mut orphaned_specs: BTreeMap<String, Vec<Instance>> = BTreeMap::new();
     for inst in &all_instances {
         if !specs.contains_key(&inst.spec_name) {
             orphaned_specs
@@ -350,7 +356,7 @@ mod tests {
         db.register_nodes(&test_nodes()).unwrap();
 
         let spec = parse_spec("name: test\nreplicas: 2\n").unwrap();
-        let mut specs = HashMap::new();
+        let mut specs = BTreeMap::new();
         specs.insert("test".into(), spec);
 
         let actions = reconcile(
@@ -373,7 +379,7 @@ mod tests {
         db.register_nodes(&test_nodes()).unwrap();
 
         let spec = parse_spec("name: test\nreplicas: 1\n").unwrap();
-        let hash = hash_spec(&spec);
+        let hash = hash_spec(&spec).unwrap();
 
         db.insert_instance(&Instance {
             id: "inst-1".into(),
@@ -395,7 +401,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut specs = HashMap::new();
+        let mut specs = BTreeMap::new();
         specs.insert("test".into(), spec);
 
         let actions = reconcile(
@@ -418,7 +424,7 @@ mod tests {
         db.register_nodes(&test_nodes()).unwrap();
 
         let spec = parse_spec("name: test\nreplicas: 1\n").unwrap();
-        let hash = hash_spec(&spec);
+        let hash = hash_spec(&spec).unwrap();
 
         db.insert_instance(&Instance {
             id: "inst-1".into(),
@@ -430,7 +436,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut specs = HashMap::new();
+        let mut specs = BTreeMap::new();
         specs.insert("test".into(), spec);
 
         let actions = reconcile(
@@ -461,7 +467,7 @@ mod tests {
         })
         .unwrap();
 
-        let specs: HashMap<String, Spec> = HashMap::new();
+        let specs: BTreeMap<String, Spec> = BTreeMap::new();
         let actions = reconcile(
             &db,
             &specs,

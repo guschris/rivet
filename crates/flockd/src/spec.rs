@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,11 +79,12 @@ pub fn parse_spec(content: &str) -> Result<Spec, String> {
         .map_err(|e| format!("invalid spec YAML: {}", e))
 }
 
-pub fn hash_spec(spec: &Spec) -> String {
+pub fn hash_spec(spec: &Spec) -> Result<String, String> {
     let mut hasher = Sha256::new();
-    let json = serde_json::to_string(spec).unwrap_or_default();
+    let json = serde_json::to_string(spec)
+        .map_err(|e| format!("serialization error: {}", e))?;
     hasher.update(json.as_bytes());
-    format!("{:x}", hasher.finalize())
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 #[allow(dead_code)]
@@ -95,8 +96,8 @@ pub fn hash_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-pub fn load_specs(specs_dir: &Path) -> Result<HashMap<String, Spec>, String> {
-    let mut specs = HashMap::new();
+pub fn load_specs(specs_dir: &Path) -> Result<BTreeMap<String, Spec>, String> {
+    let mut specs = BTreeMap::new();
 
     let entries = std::fs::read_dir(specs_dir)
         .map_err(|e| format!("cannot read specs dir {}: {}", specs_dir.display(), e))?;
@@ -106,6 +107,14 @@ pub fn load_specs(specs_dir: &Path) -> Result<HashMap<String, Spec>, String> {
         let path = entry.path();
 
         if !path.is_file() {
+            continue;
+        }
+
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if filename.starts_with('.') {
+            continue;
+        }
+        if filename.ends_with('~') || filename.ends_with(".swp") || filename.ends_with(".bak") {
             continue;
         }
 
@@ -174,13 +183,13 @@ command:
     fn hash_changes_on_content_change() {
         let spec1 = parse_spec("name: test\nreplicas: 1\n").unwrap();
         let spec2 = parse_spec("name: test\nreplicas: 2\n").unwrap();
-        assert_ne!(hash_spec(&spec1), hash_spec(&spec2));
+        assert_ne!(hash_spec(&spec1).unwrap(), hash_spec(&spec2).unwrap());
     }
 
     #[test]
     fn hash_stable_for_same_spec() {
         let spec1 = parse_spec("name: test\nreplicas: 1\n").unwrap();
         let spec2 = parse_spec("name: test\nreplicas: 1\n").unwrap();
-        assert_eq!(hash_spec(&spec1), hash_spec(&spec2));
+        assert_eq!(hash_spec(&spec1).unwrap(), hash_spec(&spec2).unwrap());
     }
 }

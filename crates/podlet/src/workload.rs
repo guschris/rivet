@@ -32,8 +32,8 @@ fn spawn_process(command: &[String]) -> Result<tokio::process::Child, String> {
 
     Command::new(prog)
         .args(args)
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .stdin(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("failed to spawn '{}': {}", prog, e))
@@ -53,8 +53,8 @@ fn spawn_container(
         .arg("--name")
         .arg(name)
         .arg("--rm")
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .stdin(std::process::Stdio::null());
 
     for (mapping, host_port) in ports {
@@ -77,8 +77,8 @@ fn spawn_vm(command: &[String]) -> Result<tokio::process::Child, String> {
 
     Command::new("qemu-system-x86_64")
         .args(command)
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .stdin(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("failed to start qemu: {}", e))

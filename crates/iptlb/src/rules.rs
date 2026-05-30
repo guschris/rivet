@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::process::Command;
 
-pub fn chain_name(vip: &str) -> String {
-    format!("IPTLB-{}", vip.replace(['.', ':'], "-"))
+pub fn chain_name(vip: &str, port: u16) -> String {
+    format!("IPTLB-{}-{}", port, vip.replace(['.', ':'], "-"))
 }
 
 pub fn build_rules(
@@ -140,8 +140,8 @@ mod tests {
 
     #[test]
     fn chain_name_replaces_dots_and_colons() {
-        assert_eq!(chain_name("10.0.0.1"), "IPTLB-10-0-0-1");
-        assert_eq!(chain_name("192.168.1.1"), "IPTLB-192-168-1-1");
+        assert_eq!(chain_name("10.0.0.1", 80), "IPTLB-80-10-0-0-1");
+        assert_eq!(chain_name("192.168.1.1", 443), "IPTLB-443-192-168-1-1");
     }
 
     #[test]
