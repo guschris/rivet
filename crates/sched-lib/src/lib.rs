@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 pub enum Scheduler {
     FirstFit,
     BestFit,
@@ -8,11 +10,15 @@ impl Scheduler {
         match s {
             "first-fit" => Ok(Scheduler::FirstFit),
             "best-fit" => Ok(Scheduler::BestFit),
-            other => Err(format!("unknown scheduler '{}', expected 'first-fit' or 'best-fit'", other)),
+            other => Err(format!(
+                "unknown scheduler '{}', expected 'first-fit' or 'best-fit'",
+                other
+            )),
         }
     }
 }
 
+#[derive(Serialize)]
 pub struct ScheduleResult {
     pub node: String,
     pub instance_id: String,

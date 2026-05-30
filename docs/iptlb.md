@@ -69,6 +69,10 @@ echo "10.0.0.6:8080" > /mnt/state/services/web.backend
 
 ## See Also
 
+- [Quickstart](quickstart.md) — 5-minute hands-on walkthrough
 - [podlet](podlet.md) — Workload supervisor that produces backend endpoints
 - [flockd](flockd.md) — Declarative reconciler that can write the backends file automatically
-- [Integration Guide](integration.md) — How the three tools compose into a full orchestrator
+- [probe](probe.md) — Standalone health-checker for verifying backend health
+- [sched](sched.md) — Standalone scheduler for placement decisions
+- [merge](merge.md) — Deep-merge tool for layering configs
+- [Integration Guide](integration.md) — How the tools compose into a full orchestrator

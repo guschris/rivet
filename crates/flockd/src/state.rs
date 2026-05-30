@@ -295,6 +295,18 @@ impl StateDB {
             .map_err(|e| format!("delete rollout error: {}", e))?;
         Ok(())
     }
+
+    pub fn begin_transaction(&self) -> Result<(), String> {
+        self.conn
+            .execute_batch("BEGIN")
+            .map_err(|e| format!("begin transaction error: {}", e))
+    }
+
+    pub fn rollback_transaction(&self) -> Result<(), String> {
+        self.conn
+            .execute_batch("ROLLBACK")
+            .map_err(|e| format!("rollback error: {}", e))
+    }
 }
 
 #[cfg(test)]

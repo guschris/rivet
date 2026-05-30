@@ -2,9 +2,60 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::exec;
-use crate::scheduler::{self, Scheduler};
 use crate::spec::{hash_spec, Instance, Rollout, Spec};
 use crate::state::StateDB;
+use sched_lib::{self, Scheduler};
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "action")]
+pub enum PlanAction {
+    Create {
+        instance_id: String,
+        node: String,
+        cmd: String,
+    },
+    Delete {
+        instance_id: String,
+        node: String,
+        cmd: String,
+    },
+    DrainOld {
+        instance_id: String,
+        node: String,
+        cmd: String,
+    },
+    Notify {
+        message: String,
+    },
+}
+
+impl PlanAction {
+    pub fn message(&self) -> String {
+        match self {
+            PlanAction::Create {
+                instance_id,
+                node,
+                cmd,
+            } => format!("create: {} on {} -> {}", instance_id, node, cmd),
+            PlanAction::Delete {
+                instance_id,
+                node,
+                cmd,
+            } => format!("delete: {} on {} -> {}", instance_id, node, cmd),
+            PlanAction::DrainOld {
+                instance_id,
+                node,
+                cmd,
+            } => format!(
+                "rollout: drain old {} on {} -> {}",
+                instance_id, node, cmd
+            ),
+            PlanAction::Notify { message } => message.clone(),
+        }
+    }
+}
 
 pub fn timestamp() -> String {
     let now = SystemTime::now()
@@ -21,26 +72,30 @@ pub fn reconcile(
     exec_create_template: &str,
     exec_delete_template: &str,
     exec_health_template: &str,
-) -> Vec<String> {
-    let mut actions: Vec<String> = Vec::new();
+    execute: bool,
+) -> Vec<PlanAction> {
+    let mut actions: Vec<PlanAction> = Vec::new();
 
     if let Err(e) = db.register_nodes(nodes) {
-        actions.push(format!("db error registering nodes: {}", e));
+        notify(&mut actions, format!("db error registering nodes: {}", e));
     }
 
-    collect_garbage(db, specs, exec_delete_template, &mut actions);
+    collect_garbage(db, specs, exec_delete_template, execute, &mut actions);
 
     for spec in specs.values() {
         let current_hash = match hash_spec(spec) {
             Ok(h) => h,
             Err(e) => {
-                actions.push(format!("hash error for '{}': {}", spec.name, e));
+                notify(&mut actions, format!("hash error for '{}': {}", spec.name, e));
                 continue;
             }
         };
 
         let instances = db.get_instances(&spec.name).unwrap_or_else(|e| {
-            actions.push(format!("db error loading instances for '{}': {}", spec.name, e));
+            notify(
+                &mut actions,
+                format!("db error loading instances for '{}': {}", spec.name, e),
+            );
             vec![]
         });
 
@@ -63,7 +118,10 @@ pub fn reconcile(
 
         if !old_hash_instances.is_empty() {
             let rollout = db.get_rollout(&spec.name).unwrap_or_else(|e| {
-                actions.push(format!("db error loading rollout: {}", e));
+                notify(
+                    &mut actions,
+                    format!("db error loading rollout: {}", e),
+                );
                 None
             });
 
@@ -72,9 +130,12 @@ pub fn reconcile(
                     db.delete_rollout(&r.spec_name).ok();
                     let new_rollout = Rollout::new(&spec.name, &current_hash);
                     if let Err(e) = db.insert_rollout(&new_rollout) {
-                        actions.push(format!("db error restarting rollout: {}", e));
+                        notify(&mut actions, format!("db error restarting rollout: {}", e));
                     } else {
-                        actions.push(format!("spec '{}' changed during rollout, restarting", spec.name));
+                        notify(
+                            &mut actions,
+                            format!("spec '{}' changed during rollout, restarting", spec.name),
+                        );
                     }
                     continue;
                 }
@@ -96,73 +157,135 @@ pub fn reconcile(
                             let next_idx = instances.len() as u32;
                             match schedule_instance(db, spec, &r.new_hash, nodes, scheduler, next_idx) {
                                 Ok(inst) => {
-                                    let cmd = exec::substitute(exec_create_template, &inst.id, &inst.node);
-                                    actions.push(format!("rollout: create {}/{} -> {} on {}",
-                                        r.created_count + 1, spec.replicas, inst.id, inst.node));
-                                    if let Err(e) = exec::run_command(&cmd) {
-                                        actions.push(format!("create error: {}", e));
-                                    } else {
-                                        let mut new_inst = inst;
-                                        new_inst.status = "running".into();
-                                        db.insert_instance(&new_inst).ok();
-                                        db.increment_rollout_count(&r.spec_name).ok();
+                                    let cmd = exec::substitute(
+                                        exec_create_template,
+                                        &inst.id,
+                                        &inst.node,
+                                    );
+                                    notify(
+                                        &mut actions,
+                                        format!(
+                                            "rollout: create {}/{} -> {} on {}",
+                                            r.created_count + 1,
+                                            spec.replicas,
+                                            inst.id,
+                                            inst.node,
+                                        ),
+                                    );
+                                    actions.push(PlanAction::Create {
+                                        instance_id: inst.id.clone(),
+                                        node: inst.node.clone(),
+                                        cmd,
+                                    });
+                                    if execute {
+                                        let create_cmd = exec::substitute(
+                                            exec_create_template,
+                                            &inst.id,
+                                            &inst.node,
+                                        );
+                                        if let Err(e) = exec::run_command(&create_cmd) {
+                                            notify(
+                                                &mut actions,
+                                                format!("create error: {}", e),
+                                            );
+                                        } else {
+                                            let mut new_inst = inst;
+                                            new_inst.status = "running".into();
+                                            db.insert_instance(&new_inst).ok();
+                                            db.increment_rollout_count(&r.spec_name).ok();
+                                        }
                                     }
                                 }
                                 Err(e) => {
-                                    actions.push(format!("schedule error: {}", e));
+                                    notify(&mut actions, format!("schedule error: {}", e));
                                 }
                             }
                         } else {
                             db.update_rollout_phase(&r.spec_name, "waiting_healthy").ok();
-                            actions.push(format!("rollout: {} instances created, waiting for healthy", r.created_count));
+                            notify(
+                                &mut actions,
+                                format!("rollout: {} instances created, waiting for healthy", r.created_count),
+                            );
                         }
                     }
                     "waiting_healthy" => {
                         if healthy_new.len() as u32 >= spec.replicas {
                             if let Err(e) = db.update_rollout_phase(&r.spec_name, "draining") {
-                                actions.push(format!("db error: {}", e));
+                                notify(&mut actions, format!("db error: {}", e));
                             } else {
-                                actions.push(format!("rollout: {} healthy, starting drain of old instances", healthy_new.len()));
+                                notify(
+                                    &mut actions,
+                                    format!("rollout: {} healthy, starting drain of old instances", healthy_new.len()),
+                                );
                             }
                         } else {
-                            actions.push(format!("rollout: waiting ({}/{} healthy)",
-                                healthy_new.len(), spec.replicas));
+                            notify(
+                                &mut actions,
+                                format!(
+                                    "rollout: waiting ({}/{} healthy)",
+                                    healthy_new.len(),
+                                    spec.replicas
+                                ),
+                            );
                         }
                     }
                     "draining" => {
                         if let Some(old) = old_hash_instances.first() {
-                            let cmd = exec::substitute(exec_delete_template, &old.id, &old.node);
-                            actions.push(format!("rollout: drain old {} on {} -> {}", old.id, old.node, cmd));
+                            let cmd =
+                                exec::substitute(exec_delete_template, &old.id, &old.node);
+                            actions.push(PlanAction::DrainOld {
+                                instance_id: old.id.clone(),
+                                node: old.node.clone(),
+                                cmd,
+                            });
                             db.update_instance_status(&old.id, "deleting").ok();
-                            if let Err(e) = exec::run_command(&cmd) {
-                                actions.push(format!("delete error: {}", e));
+                            if execute {
+                                let drain_cmd =
+                                    exec::substitute(exec_delete_template, &old.id, &old.node);
+                                if let Err(e) = exec::run_command(&drain_cmd) {
+                                    notify(
+                                        &mut actions,
+                                        format!("delete error: {}", e),
+                                    );
+                                }
+                                db.delete_instance(&old.id).ok();
                             }
-                            db.delete_instance(&old.id).ok();
                         } else {
                             db.update_rollout_phase(&r.spec_name, "complete").ok();
-                            actions.push("rollout: all old instances drained".to_string());
+                            notify(
+                                &mut actions,
+                                "rollout: all old instances drained".into(),
+                            );
                         }
                     }
                     "complete" => {
                         db.delete_rollout(&r.spec_name).ok();
-                        actions.push(format!("rollout complete for '{}'", spec.name));
+                        notify(
+                            &mut actions,
+                            format!("rollout complete for '{}'", spec.name),
+                        );
                     }
                     _ => {}
                 }
             } else {
                 let new_rollout = Rollout::new(&spec.name, &current_hash);
                 if let Err(e) = db.insert_rollout(&new_rollout) {
-                    actions.push(format!("db error starting rollout: {}", e));
+                    notify(&mut actions, format!("db error starting rollout: {}", e));
                 } else {
-                    actions.push(format!("spec '{}' changed ({} old instances), starting rollout",
-                        spec.name, old_hash_instances.len()));
+                    notify(
+                        &mut actions,
+                        format!(
+                            "spec '{}' changed ({} old instances), starting rollout",
+                            spec.name,
+                            old_hash_instances.len()
+                        ),
+                    );
                 }
             }
 
             continue;
         }
 
-        // If a completed rollout record exists (but no old instances), clean it up
         if let Ok(Some(rollout)) = db.get_rollout(&spec.name) {
             if rollout.phase == "complete" {
                 db.delete_rollout(&spec.name).ok();
@@ -174,10 +297,13 @@ pub fn reconcile(
 
         if current_count < desired {
             let needed = desired - current_count;
-            actions.push(format!(
-                "spec '{}': {} healthy, need {} more",
-                spec.name, current_count, needed
-            ));
+            notify(
+                &mut actions,
+                format!(
+                    "spec '{}': {} healthy, need {} more",
+                    spec.name, current_count, needed
+                ),
+            );
 
             let mut next_idx = instances.len() as u32;
 
@@ -186,42 +312,62 @@ pub fn reconcile(
                     Ok(inst) => {
                         let cmd =
                             exec::substitute(exec_create_template, &inst.id, &inst.node);
-                        actions.push(format!(
-                            "create: {} on {} -> {}",
-                            inst.id, inst.node, cmd
-                        ));
+                        actions.push(PlanAction::Create {
+                            instance_id: inst.id.clone(),
+                            node: inst.node.clone(),
+                            cmd,
+                        });
 
-                        match exec::run_command(&cmd) {
-                            Ok(true) => {
-                                let mut new_inst = inst;
-                                new_inst.status = "running".into();
-                                if let Err(e) = db.insert_instance(&new_inst) {
-                                    actions.push(format!("db error inserting {}: {}", new_inst.id, e));
-                                } else {
-                                    actions.push(format!("created: {}", new_inst.id));
+                        if execute {
+                            let create_cmd =
+                                exec::substitute(exec_create_template, &inst.id, &inst.node);
+                            match exec::run_command(&create_cmd) {
+                                Ok(true) => {
+                                    let mut new_inst = inst;
+                                    new_inst.status = "running".into();
+                                    if let Err(e) = db.insert_instance(&new_inst) {
+                                        notify(
+                                            &mut actions,
+                                            format!("db error inserting {}: {}", new_inst.id, e),
+                                        );
+                                    } else {
+                                        notify(
+                                            &mut actions,
+                                            format!("created: {}", new_inst.id),
+                                        );
+                                    }
                                 }
-                            }
-                            Ok(false) => {
-                                actions.push(format!("create failed: {}", inst.id));
-                            }
-                            Err(e) => {
-                                actions.push(format!("create error: {}", e));
+                                Ok(false) => {
+                                    notify(
+                                        &mut actions,
+                                        format!("create failed: {}", inst.id),
+                                    );
+                                }
+                                Err(e) => {
+                                    notify(
+                                        &mut actions,
+                                        format!("create error: {}", e),
+                                    );
+                                }
                             }
                         }
                         next_idx += 1;
                     }
                     Err(e) => {
-                        actions.push(format!("schedule error: {}", e));
+                        notify(&mut actions, format!("schedule error: {}", e));
                         break;
                     }
                 }
             }
         } else if current_count > desired {
             let excess = current_count - desired;
-            actions.push(format!(
-                "spec '{}': {} running, {} excess",
-                spec.name, current_count, excess
-            ));
+            notify(
+                &mut actions,
+                format!(
+                    "spec '{}': {} running, {} excess",
+                    spec.name, current_count, excess
+                ),
+            );
 
             let mut to_delete: Vec<&Instance> = running
                 .iter()
@@ -242,39 +388,64 @@ pub fn reconcile(
 
             for inst in &to_delete {
                 let cmd = exec::substitute(exec_delete_template, &inst.id, &inst.node);
-                actions.push(format!("delete: {} on {} -> {}", inst.id, inst.node, cmd));
+                actions.push(PlanAction::Delete {
+                    instance_id: inst.id.clone(),
+                    node: inst.node.clone(),
+                    cmd,
+                });
 
                 if let Err(e) = db.update_instance_status(&inst.id, "deleting") {
-                    actions.push(format!("db error marking {} deleting: {}", inst.id, e));
+                    notify(
+                        &mut actions,
+                        format!("db error marking {} deleting: {}", inst.id, e),
+                    );
                 }
-                if let Err(e) = exec::run_command(&cmd) {
-                    actions.push(format!("delete command error for {}: {}", inst.id, e));
+                if execute {
+                    let delete_cmd =
+                        exec::substitute(exec_delete_template, &inst.id, &inst.node);
+                    if let Err(e) = exec::run_command(&delete_cmd) {
+                        notify(
+                            &mut actions,
+                            format!("delete command error for {}: {}", inst.id, e),
+                        );
+                    }
                 }
                 if let Err(e) = db.delete_instance(&inst.id) {
-                    actions.push(format!("db error deleting {}: {}", inst.id, e));
+                    notify(
+                        &mut actions,
+                        format!("db error deleting {}: {}", inst.id, e),
+                    );
                 }
             }
         } else {
-            actions.push(format!(
-                "spec '{}': {} replicas healthy (no change)",
-                spec.name, current_count
-            ));
+            notify(
+                &mut actions,
+                format!(
+                    "spec '{}': {} replicas healthy (no change)",
+                    spec.name, current_count
+                ),
+            );
         }
     }
 
     actions
 }
 
+fn notify(actions: &mut Vec<PlanAction>, message: String) {
+    actions.push(PlanAction::Notify { message });
+}
+
 fn collect_garbage(
     db: &StateDB,
     specs: &BTreeMap<String, Spec>,
     exec_delete_template: &str,
-    actions: &mut Vec<String>,
+    execute: bool,
+    actions: &mut Vec<PlanAction>,
 ) {
     let all_instances = match db.get_all_instances() {
         Ok(insts) => insts,
         Err(e) => {
-            actions.push(format!("db error loading all instances for gc: {}", e));
+            notify(actions, format!("db error loading all instances for gc: {}", e));
             return;
         }
     };
@@ -290,32 +461,53 @@ fn collect_garbage(
     }
 
     for (spec_name, instances) in &orphaned_specs {
-        actions.push(format!(
-            "gc: spec '{}' removed, cleaning up {} orphaned instances",
-            spec_name,
-            instances.len()
-        ));
+        notify(
+            actions,
+            format!(
+                "gc: spec '{}' removed, cleaning up {} orphaned instances",
+                spec_name,
+                instances.len()
+            ),
+        );
 
         for inst in instances {
             let cmd = exec::substitute(exec_delete_template, &inst.id, &inst.node);
-            actions.push(format!("gc: delete orphan {} -> {}", inst.id, cmd));
+            actions.push(PlanAction::Delete {
+                instance_id: inst.id.clone(),
+                node: inst.node.clone(),
+                cmd,
+            });
 
-            if let Err(e) = exec::run_command(&cmd) {
-                actions.push(format!("gc: delete error for {}: {}", inst.id, e));
+            if execute {
+                let gc_cmd = exec::substitute(exec_delete_template, &inst.id, &inst.node);
+                if let Err(e) = exec::run_command(&gc_cmd) {
+                    notify(
+                        actions,
+                        format!("gc: delete error for {}: {}", inst.id, e),
+                    );
+                }
             }
             if let Err(e) = db.delete_instance(&inst.id) {
-                actions.push(format!("gc: db error deleting {}: {}", inst.id, e));
+                notify(
+                    actions,
+                    format!("gc: db error deleting {}: {}", inst.id, e),
+                );
             }
         }
     }
 
-    // Also clean up orphaned rollouts
     for spec_name in orphaned_specs.keys() {
         if let Ok(Some(_)) = db.get_rollout(spec_name) {
             if let Err(e) = db.delete_rollout(spec_name) {
-                actions.push(format!("gc: db error deleting rollout for '{}': {}", spec_name, e));
+                notify(
+                    actions,
+                    format!("gc: db error deleting rollout for '{}': {}", spec_name, e),
+                );
             } else {
-                actions.push(format!("gc: cleaned up rollout for deleted spec '{}'", spec_name));
+                notify(
+                    actions,
+                    format!("gc: cleaned up rollout for deleted spec '{}'", spec_name),
+                );
             }
         }
     }
@@ -344,7 +536,7 @@ fn schedule_instance(
         })
         .collect();
 
-    let result = scheduler::schedule(scheduler, &available, &node_loads, &spec.name, next_index)
+    let result = sched_lib::schedule(scheduler, &available, &node_loads, &spec.name, next_index)
         .ok_or_else(|| "no available nodes".to_string())?;
 
     Ok(Instance {
@@ -396,6 +588,61 @@ pub fn check_node_health(
     actions
 }
 
+pub fn execute_plan_action(db: &StateDB, action: &PlanAction) -> Result<(), String> {
+    match action {
+        PlanAction::Create {
+            instance_id,
+            node,
+            cmd,
+        } => {
+            match exec::run_command(cmd) {
+                Ok(true) => {
+                    db.insert_instance(&Instance {
+                        id: instance_id.clone(),
+                        spec_name: instance_id
+                            .rsplit('-')
+                            .next()
+                            .map(|s| s.split('-').next().unwrap_or(""))
+                            .unwrap_or(instance_id)
+                            .to_string(),
+                        node: node.clone(),
+                        status: "running".into(),
+                        spec_hash: String::new(),
+                        created_at: timestamp(),
+                    })
+                    .map_err(|e| format!("insert error: {}", e))?;
+                }
+                Ok(false) => {
+                    return Err(format!("create command failed for {}", instance_id));
+                }
+                Err(e) => {
+                    return Err(format!("create error for {}: {}", instance_id, e));
+                }
+            }
+        }
+        PlanAction::Delete {
+            instance_id,
+            cmd,
+            ..
+        } => {
+            if let Err(e) = exec::run_command(cmd) {
+                return Err(format!("delete error for {}: {}", instance_id, e));
+            }
+        }
+        PlanAction::DrainOld {
+            instance_id,
+            cmd,
+            ..
+        } => {
+            if let Err(e) = exec::run_command(cmd) {
+                return Err(format!("drain error for {}: {}", instance_id, e));
+            }
+        }
+        PlanAction::Notify { .. } => {}
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,10 +674,12 @@ mod tests {
             "echo create {name} on {node}",
             "echo delete {name}",
             "",
+            true,
         );
 
-        assert!(actions.iter().any(|a| a.contains("need 2 more")));
-        assert!(actions.iter().any(|a| a.contains("created:")));
+        let msgs: Vec<String> = actions.iter().map(|a| a.message()).collect();
+        assert!(msgs.iter().any(|a| a.contains("need 2 more")));
+        assert!(msgs.iter().any(|a| a.contains("created:")));
     }
 
     #[test]
@@ -472,10 +721,12 @@ mod tests {
             "echo create {name}",
             "echo delete {name}",
             "",
+            true,
         );
 
-        assert!(actions.iter().any(|a| a.contains("excess")));
-        assert!(actions.iter().any(|a| a.contains("delete:")));
+        let msgs: Vec<String> = actions.iter().map(|a| a.message()).collect();
+        assert!(msgs.iter().any(|a| a.contains("excess")));
+        assert!(msgs.iter().any(|a| a.contains("delete:")));
     }
 
     #[test]
@@ -507,9 +758,11 @@ mod tests {
             "echo create {name}",
             "echo delete {name}",
             "",
+            true,
         );
 
-        assert!(actions.iter().any(|a| a.contains("no change")));
+        let msgs: Vec<String> = actions.iter().map(|a| a.message()).collect();
+        assert!(msgs.iter().any(|a| a.contains("no change")));
     }
 
     #[test]
@@ -536,9 +789,44 @@ mod tests {
             "echo create {name}",
             "echo delete {name}",
             "",
+            true,
         );
 
-        assert!(actions.iter().any(|a| a.contains("orphaned")));
-        assert!(actions.iter().any(|a| a.contains("orphan-1")));
+        let msgs: Vec<String> = actions.iter().map(|a| a.message()).collect();
+        assert!(msgs.iter().any(|a| a.contains("orphaned")));
+        assert!(msgs.iter().any(|a| a.contains("orphan-1")));
+    }
+
+    #[test]
+    fn plan_only_no_execution() {
+        let db = test_db();
+        db.register_nodes(&test_nodes()).unwrap();
+
+        let spec = parse_spec("name: test\nreplicas: 1\n").unwrap();
+        let mut specs = BTreeMap::new();
+        specs.insert("test".into(), spec);
+
+        let actions = reconcile(
+            &db,
+            &specs,
+            &test_nodes(),
+            &Scheduler::FirstFit,
+            "echo create {name}",
+            "echo delete {name}",
+            "",
+            false,
+        );
+
+        let creates: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, PlanAction::Create { .. }))
+            .collect();
+        assert!(!creates.is_empty());
+
+        let instances = db.get_instances("test").unwrap();
+        assert!(
+            instances.is_empty(),
+            "plan-only should not create instances in DB"
+        );
     }
 }

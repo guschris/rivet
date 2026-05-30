@@ -2,6 +2,19 @@
 
 This guide shows how [podlet](podlet.md), [iptlb](iptlb.md), and [flockd](flockd.md) compose into a complete Kubernetes-like orchestrator — without Kubernetes.
 
+## The Toolkit
+
+| Tool | Role | Docs |
+|------|------|------|
+| **[podlet](podlet.md)** | Workload supervisor (process/container/VM) | [podlet.md](podlet.md) |
+| **[flockd](flockd.md)** | Declarative reconciler + scheduler | [flockd.md](flockd.md) |
+| **[iptlb](iptlb.md)** | L4 TCP load balancer (iptables DNAT) | [iptlb.md](iptlb.md) |
+| **[merge](merge.md)** | Deep-merge YAML/JSON configs (RFC 7396) | [merge.md](merge.md) |
+| **[probe](probe.md)** | Async health-checker (TCP/HTTP/exec), NDJSON output | [probe.md](probe.md) |
+| **[sched](sched.md)** | Standalone bin-packing scheduler (first-fit/best-fit) | [sched.md](sched.md) |
+
+The three core tools (podlet, flockd, iptlb) form the orchestrator. The three support tools (merge, probe, sched) are individually useful and can be adopted independently.
+
 ## Architecture
 
 ```
@@ -207,6 +220,7 @@ This simulates NFS with a temp directory and uses local echo commands instead of
 
 ## See Also
 
+- [Quickstart](quickstart.md) — 5-minute hands-on walkthrough
 - [podlet](podlet.md) — Workload supervisor
 - [iptlb](iptlb.md) — L4 load balancer
 - [flockd](flockd.md) — Declarative reconciler

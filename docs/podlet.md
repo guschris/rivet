@@ -110,6 +110,10 @@ Start with: `systemctl start podlet@myapp`
 
 ## See Also
 
+- [Quickstart](quickstart.md) — 5-minute hands-on walkthrough
 - [iptlb](iptlb.md) — L4 load balancer that can route traffic to podlet-managed backends
 - [flockd](flockd.md) — Declarative reconciler that orchestrates podlet across nodes
-- [Integration Guide](integration.md) — How the three tools compose into a full orchestrator
+- [probe](probe.md) — Standalone health-checker (podlet's health checks are built on the same library)
+- [sched](sched.md) — Standalone scheduler for placement decisions
+- [merge](merge.md) — Deep-merge tool for layering spec configs
+- [Integration Guide](integration.md) — How the tools compose into a full orchestrator

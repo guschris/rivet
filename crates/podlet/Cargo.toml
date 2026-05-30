@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 clap.workspace = true
+health-lib = { path = "../health-lib" }
 libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true

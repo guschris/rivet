@@ -3,15 +3,16 @@ use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::Duration;
 
+#[derive(Clone)]
 pub enum HealthChecker {
-    Tcp { port: u16 },
+    Tcp { host: String, port: u16 },
     Http { host: String, port: u16, path: String },
     Exec { command: String },
 }
 
 impl HealthChecker {
-    pub fn tcp(port: u16) -> Self {
-        HealthChecker::Tcp { port }
+    pub fn tcp(host: String, port: u16) -> Self {
+        HealthChecker::Tcp { host, port }
     }
 
     pub fn http(host: String, port: u16, path: String) -> Self {
@@ -24,7 +25,7 @@ impl HealthChecker {
 
     pub async fn check(&self) -> bool {
         match self {
-            HealthChecker::Tcp { port } => check_tcp(*port),
+            HealthChecker::Tcp { host, port } => check_tcp(host, *port),
             HealthChecker::Http { host, port, path } => check_http(host, *port, path),
             HealthChecker::Exec { command } => check_exec(command),
         }
@@ -38,17 +39,26 @@ impl HealthChecker {
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        Err(format!("health check did not become healthy within {:?}", timeout))
+        Err(format!(
+            "health check did not become healthy within {:?}",
+            timeout
+        ))
     }
 }
 
-fn check_tcp(port: u16) -> bool {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+fn check_tcp(host: &str, port: u16) -> bool {
+    let addr: SocketAddr = match format!("{}:{}", host, port).parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
     TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok()
 }
 
 fn check_http(host: &str, port: u16, path: &str) -> bool {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr: SocketAddr = match format!("{}:{}", host, port).parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
     let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_secs(2)) {
         Ok(s) => s,
         Err(_) => return false,
@@ -86,4 +96,30 @@ fn check_exec(command: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tcp_check_closed_port() {
+        let checker = HealthChecker::tcp("127.0.0.1".into(), 1);
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(checker.check());
+        assert!(!result);
+    }
+
+    #[test]
+    fn exec_check_true() {
+        let checker = HealthChecker::exec("true".into());
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(checker.check());
+        assert!(result);
+    }
+
+    #[test]
+    fn exec_check_false() {
+        let checker = HealthChecker::exec("false".into());
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(checker.check());
+        assert!(!result);
+    }
 }

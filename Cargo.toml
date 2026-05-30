@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/podlet", "crates/iptlb", "crates/flockd"]
+members = ["crates/podlet", "crates/iptlb", "crates/flockd", "crates/merge", "crates/health-lib", "crates/probe", "crates/sched-lib", "crates/sched"]
 
 [workspace.package]
 version = "0.1.0"

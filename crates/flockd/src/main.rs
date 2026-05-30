@@ -1,12 +1,11 @@
 mod exec;
 mod leader;
 mod reconciler;
-mod scheduler;
 mod spec;
 mod state;
 
 use clap::Parser;
-use scheduler::Scheduler;
+use sched_lib::Scheduler;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -46,6 +45,12 @@ struct Cli {
 
     #[arg(long)]
     lock_file: Option<PathBuf>,
+
+    #[arg(long, help = "Compute plan and output JSON to stdout, then exit (no execution)")]
+    plan_only: bool,
+
+    #[arg(long, value_name = "FILE", help = "Read plan JSON from file and execute it")]
+    plan_file: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -56,6 +61,11 @@ async fn main() {
         eprintln!("flockd: {}", e);
         std::process::exit(1);
     });
+
+    if let Some(ref plan_path) = cli.plan_file {
+        run_plan_file(plan_path, &cli.state);
+        return;
+    }
 
     let mut lock_guard = None;
     if let Some(ref lock_path) = cli.lock_file {
@@ -82,6 +92,23 @@ async fn main() {
         }
         std::process::exit(1);
     });
+
+    if cli.plan_only {
+        run_plan_once(
+            &db,
+            &cli.specs,
+            &cli.exec_create,
+            &cli.exec_delete,
+            &cli.exec_health,
+            &scheduler,
+            &cli.nodes_file,
+            &cli.node_health_cmd,
+        );
+        if let Some(f) = lock_guard.take() {
+            leader::release(f);
+        }
+        return;
+    }
 
     let mut ticker = time::interval(Duration::from_secs(cli.interval));
     ticker.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
@@ -155,10 +182,11 @@ async fn main() {
             &cli.exec_create,
             &cli.exec_delete,
             &cli.exec_health,
+            true,
         );
 
         for action in &actions {
-            eprintln!("flockd: {}", action);
+            eprintln!("flockd: {}", action.message());
         }
 
         if actions.is_empty() && !changed {
@@ -166,5 +194,93 @@ async fn main() {
         }
     }
 
+    if let Some(f) = lock_guard.take() {
+        leader::release(f);
+    }
     eprintln!("flockd: reconciler stopped");
+}
+
+fn load_nodes(nodes_file: &Option<PathBuf>) -> Vec<String> {
+    match nodes_file {
+        Some(path) => {
+            let content = std::fs::read_to_string(path).unwrap_or_default();
+            content
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .collect()
+        }
+        None => vec!["localhost".into()],
+    }
+}
+
+fn run_plan_once(
+    db: &state::StateDB,
+    specs_path: &PathBuf,
+    exec_create: &str,
+    exec_delete: &str,
+    exec_health: &str,
+    scheduler: &Scheduler,
+    nodes_file: &Option<PathBuf>,
+    node_health_cmd: &str,
+) {
+    let specs = spec::load_specs(specs_path).unwrap_or_else(|e| {
+        eprintln!("flockd: error loading specs: {}", e);
+        std::process::exit(1);
+    });
+
+    let nodes = load_nodes(nodes_file);
+
+    if !node_health_cmd.is_empty() {
+        let actions = reconciler::check_node_health(db, &nodes, node_health_cmd);
+        for action in &actions {
+            eprintln!("flockd: {}", action);
+        }
+    }
+
+    db.begin_transaction().unwrap_or_else(|e| {
+        eprintln!("flockd: transaction error: {}", e);
+        std::process::exit(1);
+    });
+
+    let plan = reconciler::reconcile(
+        db, &specs, &nodes, scheduler, exec_create, exec_delete, exec_health, false,
+    );
+
+    let json = serde_json::to_string_pretty(&plan).unwrap_or_else(|e| {
+        eprintln!("flockd: JSON serialization error: {}", e);
+        "[]".into()
+    });
+    println!("{}", json);
+
+    db.rollback_transaction().unwrap_or_else(|e| {
+        eprintln!("flockd: rollback error: {}", e);
+    });
+}
+
+fn run_plan_file(plan_path: &PathBuf, state_path: &PathBuf) {
+    let content = std::fs::read_to_string(plan_path).unwrap_or_else(|e| {
+        eprintln!("flockd: error reading plan file: {}", e);
+        std::process::exit(1);
+    });
+
+    let plan: Vec<reconciler::PlanAction> = serde_json::from_str(&content).unwrap_or_else(|e| {
+        eprintln!("flockd: invalid plan JSON: {}", e);
+        std::process::exit(1);
+    });
+
+    let db = state::StateDB::open(state_path).unwrap_or_else(|e| {
+        eprintln!("flockd: {}", e);
+        std::process::exit(1);
+    });
+
+    for action in &plan {
+        eprintln!("flockd: {}", action.message());
+        match reconciler::execute_plan_action(&db, action) {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("flockd: action error: {}", e);
+            }
+        }
+    }
 }

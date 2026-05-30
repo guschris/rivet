@@ -287,6 +287,7 @@ dependencies = [
  "libc",
  "predicates",
  "rusqlite",
+ "sched-lib",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -355,6 +356,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
 dependencies = [
  "hashbrown 0.14.5",
+]
+
+[[package]]
+name = "health-lib"
+version = "0.1.0"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]
@@ -455,6 +463,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 
 [[package]]
+name = "merge"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "predicates",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
 name = "mio"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -533,6 +554,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "health-lib",
  "libc",
  "predicates",
  "serde",
@@ -579,6 +601,20 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn",
+]
+
+[[package]]
+name = "probe"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "health-lib",
+ "predicates",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -675,6 +711,26 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "sched"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "predicates",
+ "sched-lib",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "sched-lib"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "scopeguard"

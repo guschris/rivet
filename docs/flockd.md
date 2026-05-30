@@ -38,8 +38,10 @@ flockd --specs <dir>
        [--scheduler first-fit|best-fit]
        [--nodes-file <path>]
        [--node-health-cmd <template>]
-       [--interval 5]
-       [--lock-file <path>]
+        [--interval 5]
+        [--lock-file <path>]
+        [--plan-only]
+        [--plan-file <path>]
 ```
 
 | Flag | Description | Default |
@@ -54,6 +56,8 @@ flockd --specs <dir>
 | `--node-health-cmd` | Command to check node liveness | *(none)* |
 | `--interval` | Reconciliation loop interval in seconds | `5` |
 | `--lock-file` | Path for flock-based leader election | *(none)* |
+| `--plan-only` | Compute plan, output JSON to stdout, exit (no execution) | *(off)* |
+| `--plan-file` | Read a plan JSON file and execute its actions | *(none)* |
 
 ### Placeholder Substitution
 
@@ -131,8 +135,45 @@ flock -n /mnt/state/flockd.lock -c 'flockd --specs ... --state ...'
 
 Only one `flockd` runs at a time. If the leader dies, the NFSv4 lock lease expires within seconds and a backup takes over.
 
+## Plan Mode
+
+Use `--plan-only` to preview what flockd **would** do without executing any commands:
+
+```bash
+flockd --specs /mnt/state/specs \
+       --state /mnt/state/state.db \
+       --nodes-file /etc/flockd/nodes \
+       --plan-only
+```
+
+Outputs a JSON plan to stdout:
+
+```json
+[
+  {"action":"Notify","message":"spec 'frontend': 0 healthy, need 2 more"},
+  {"action":"Create","instance_id":"frontend-00000000","node":"node1","cmd":"ssh node1 systemctl start podlet@frontend-00000000"},
+  {"action":"Create","instance_id":"frontend-00000001","node":"node2","cmd":"ssh node2 systemctl start podlet@frontend-00000001"}
+]
+```
+
+All DB mutations are rolled back — `--plan-only` is safe to run on a live state database.
+
+Use `--plan-file` to execute a previously-generated plan:
+
+```bash
+flockd --plan-only > plan.json  # generate
+# review plan.json...
+flockd --state /mnt/state/state.db --plan-file plan.json  # execute
+```
+
+**Note:** `--plan-file` executes commands against the current DB state, which may have changed since the plan was generated. Use it as a best-effort apply.
+
 ## See Also
 
+- [Quickstart](quickstart.md) — 5-minute hands-on walkthrough
 - [podlet](podlet.md) — The workload supervisor that flockd orchestrates
 - [iptlb](iptlb.md) — Load balancer that flockd can keep updated with backend files
-- [Integration Guide](integration.md) — How the three tools compose into a full orchestrator
+- [sched](sched.md) — Standalone scheduler (flockd uses the same scheduling library)
+- [probe](probe.md) — Standalone health-checker for external monitoring
+- [merge](merge.md) — Deep-merge tool for layering spec configs
+- [Integration Guide](integration.md) — How the tools compose into a full orchestrator

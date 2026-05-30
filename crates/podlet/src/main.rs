@@ -10,7 +10,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::time;
 
 mod cgroups;
-mod health;
+use health_lib::HealthChecker;
 mod workload;
 
 #[derive(Parser, Debug)]
@@ -363,23 +363,23 @@ async fn main() {
     std::process::exit(exit_code);
 }
 
-fn build_health_check(cli: &Cli) -> Option<health::HealthChecker> {
+fn build_health_check(cli: &Cli) -> Option<HealthChecker> {
     if let Some(ref port) = cli.tcp_check {
         let port = parse_check_port(port).unwrap_or_else(|e| {
             eprintln!("podlet: invalid tcp-check port: {}", e);
             std::process::exit(1);
         });
-        Some(health::HealthChecker::tcp(port))
+        Some(HealthChecker::tcp("127.0.0.1".into(), port))
     } else if let Some(ref path) = cli.http_check {
         let (host, port, path) = parse_http_check(path).unwrap_or_else(|e| {
             eprintln!("podlet: invalid http-check: {}", e);
             std::process::exit(1);
         });
-        Some(health::HealthChecker::http(host, port, path))
+        Some(HealthChecker::http(host, port, path))
     } else {
         cli.exec_check
             .as_ref()
-            .map(|cmd| health::HealthChecker::exec(cmd.clone()))
+            .map(|cmd| HealthChecker::exec(cmd.clone()))
     }
 }
 
