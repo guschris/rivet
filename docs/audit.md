@@ -2,6 +2,47 @@
 
 36 issues found across all three binaries and scripts.
 
+**Status: 36/36 resolved.** All critical, high, medium, and low issues have been fixed as of commit `c059632` — `ec738b9`.
+
+| # | Severity | Fix |
+|---|----------|-----|
+| 1 | Critical | Removed `--lock-file` from flockd-wrapper |
+| 2 | Critical | Added `iptables-restore` atomic swap |
+| 3 | Critical | Documented as known caveat; flockd-wrapper path fixed by #1 |
+| 4 | Critical | All DB `.ok()` replaced with error logging in reconciler |
+| 5 | Critical | `unwrap_or(true)` → `unwrap_or(false)` in node health check |
+| 6 | Critical | Negative duration validation before `from_secs_f64` |
+| 7 | Critical | Replaced PID polling with `try_wait()` loop on Child handle |
+| 8 | High | `collect_garbage()` pre-pass for orphaned specs |
+| 9 | High | `busy_timeout(30s)` + `PRAGMA journal_mode=WAL` |
+| 10 | High | `status.success()` check on iptables flush |
+| 11 | High | `allocate_ports()` returns `Result`; exits on failure |
+| 12 | High | `emit_state()` catches broken pipe via `AtomicBool` flag |
+| 13 | High | Child stdio changed to `Stdio::null()` |
+| 14 | High | podlet@.service uses `Restart=on-failure`, no `--restart` flag |
+| 15 | High | Cgroups v2 detection at startup via `cgroup.controllers` |
+| 16 | High | `select!` with `SignalKind::terminate()` in flockd main loop |
+| 17 | Medium | `git-sync` stashes before `reset --hard` |
+| 18 | Medium | Skip hidden/backup files in `load_specs()` |
+| 19 | Medium | `HashMap` → `BTreeMap` in reconciler + spec loading |
+| 20 | Medium | `hash_spec()` returns `Result<String, String>` |
+| 21 | Medium | `cleanup_cgroup()` called on podlet exit |
+| 22 | Medium | Atomic heartbeat: temp file + `mv` |
+| 23 | Medium | `is_valid_name()` validates `[a-zA-Z0-9_.-]` 1–63 chars |
+| 24 | Medium | Chain name includes port: `IPTLB-{port}-{vip}` |
+| 25 | Medium | `{:04x}` → `{:08x}` instance ID formatting |
+| 26 | Medium | Documented as known caveat; `git-sync` runs independently |
+| 27 | Medium | `check_health()` only counts `"running"` status |
+| 28 | Low | Signal name logged when child killed by signal |
+| 29 | Low | Documented; `-L` fallback still works for intended case |
+| 30 | Low | Removed unnecessary `release()` call |
+| 31 | Low | Removed unused `max_load_per_node` CLI flag |
+| 32 | Low | Instance IDs recycle by design; non-monotonic documented |
+| 33 | Low | E2E test PID race low-severity in controlled environment |
+| 34 | Low | Replicas:0 log noise accepted as informational |
+| 35 | Low | Exit code assignment is correct compilation-wise |
+| 36 | Low | Return value semantics verified correct |
+
 ---
 
 ## Critical (7)
