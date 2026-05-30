@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection};
 use std::path::Path;
 
+use crate::spec::Rollout;
 pub use crate::spec::Instance;
 
 pub struct StateDB {
@@ -31,6 +32,12 @@ impl StateDB {
             CREATE TABLE IF NOT EXISTS nodes (
                 name TEXT PRIMARY KEY,
                 status TEXT NOT NULL DEFAULT 'up'
+            );
+            CREATE TABLE IF NOT EXISTS rollouts (
+                spec_name TEXT PRIMARY KEY,
+                new_hash TEXT NOT NULL,
+                phase TEXT NOT NULL DEFAULT 'creating',
+                created_count INTEGER NOT NULL DEFAULT 0
             );"
         )
         .map_err(|e| format!("cannot create tables: {}", e))?;
@@ -219,6 +226,75 @@ impl StateDB {
             .map_err(|e| format!("count error: {}", e))?;
         Ok(count)
     }
+
+    pub fn get_rollout(&self, spec_name: &str) -> Result<Option<Rollout>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT spec_name, new_hash, phase, created_count FROM rollouts WHERE spec_name = ?1",
+            )
+            .map_err(|e| format!("query error: {}", e))?;
+
+        let mut rows = stmt
+            .query_map(params![spec_name], |row| {
+                Ok(Rollout {
+                    spec_name: row.get(0)?,
+                    new_hash: row.get(1)?,
+                    phase: row.get(2)?,
+                    created_count: row.get(3)?,
+                })
+            })
+            .map_err(|e| format!("query error: {}", e))?;
+
+        match rows.next() {
+            Some(Ok(rollout)) => Ok(Some(rollout)),
+            Some(Err(e)) => Err(format!("rollout query error: {}", e)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn insert_rollout(&self, rollout: &Rollout) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO rollouts (spec_name, new_hash, phase, created_count)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    rollout.spec_name,
+                    rollout.new_hash,
+                    rollout.phase,
+                    rollout.created_count,
+                ],
+            )
+            .map_err(|e| format!("insert rollout error: {}", e))?;
+        Ok(())
+    }
+
+    pub fn update_rollout_phase(&self, spec_name: &str, phase: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE rollouts SET phase = ?1 WHERE spec_name = ?2",
+                params![phase, spec_name],
+            )
+            .map_err(|e| format!("update rollout error: {}", e))?;
+        Ok(())
+    }
+
+    pub fn increment_rollout_count(&self, spec_name: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE rollouts SET created_count = created_count + 1 WHERE spec_name = ?1",
+                params![spec_name],
+            )
+            .map_err(|e| format!("update rollout count error: {}", e))?;
+        Ok(())
+    }
+
+    pub fn delete_rollout(&self, spec_name: &str) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM rollouts WHERE spec_name = ?1", params![spec_name])
+            .map_err(|e| format!("delete rollout error: {}", e))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -304,5 +380,27 @@ mod tests {
 
         assert_eq!(db.instance_count_on_node("node1").unwrap(), 2);
         assert_eq!(db.instance_count_on_node("node2").unwrap(), 1);
+    }
+
+    #[test]
+    fn rollout_lifecycle() {
+        let db = test_db();
+        let rollout = Rollout::new("test-spec", "abc123");
+        db.insert_rollout(&rollout).unwrap();
+
+        let fetched = db.get_rollout("test-spec").unwrap().unwrap();
+        assert_eq!(fetched.phase, "creating");
+        assert_eq!(fetched.created_count, 0);
+
+        db.increment_rollout_count("test-spec").unwrap();
+        let fetched = db.get_rollout("test-spec").unwrap().unwrap();
+        assert_eq!(fetched.created_count, 1);
+
+        db.update_rollout_phase("test-spec", "waiting_healthy").unwrap();
+        let fetched = db.get_rollout("test-spec").unwrap().unwrap();
+        assert_eq!(fetched.phase, "waiting_healthy");
+
+        db.delete_rollout("test-spec").unwrap();
+        assert!(db.get_rollout("test-spec").unwrap().is_none());
     }
 }

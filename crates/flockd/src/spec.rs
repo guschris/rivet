@@ -68,6 +68,25 @@ pub struct NodeInfo {
     pub status: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rollout {
+    pub spec_name: String,
+    pub new_hash: String,
+    pub phase: String,
+    pub created_count: u32,
+}
+
+impl Rollout {
+    pub fn new(spec_name: &str, new_hash: &str) -> Self {
+        Rollout {
+            spec_name: spec_name.into(),
+            new_hash: new_hash.into(),
+            phase: "creating".into(),
+            created_count: 0,
+        }
+    }
+}
+
 pub fn parse_spec_file(path: &Path) -> Result<Spec, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;

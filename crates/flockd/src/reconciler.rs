@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::exec;
 use crate::scheduler::{self, Scheduler};
-use crate::spec::{hash_spec, Instance, Spec};
+use crate::spec::{hash_spec, Instance, Rollout, Spec};
 use crate::state::StateDB;
 
 pub fn timestamp() -> String {
@@ -62,62 +62,111 @@ pub fn reconcile(
             .collect();
 
         if !old_hash_instances.is_empty() {
-            actions.push(format!(
-                "spec '{}' changed, {} instances with old hash need rolling update",
-                spec.name,
-                old_hash_instances.len()
-            ));
+            let rollout = db.get_rollout(&spec.name).unwrap_or_else(|e| {
+                actions.push(format!("db error loading rollout: {}", e));
+                None
+            });
 
-            let mut next_idx = instances.len() as u32;
+            if let Some(ref r) = rollout {
+                if r.new_hash != current_hash {
+                    db.delete_rollout(&r.spec_name).ok();
+                    let new_rollout = Rollout::new(&spec.name, &current_hash);
+                    if let Err(e) = db.insert_rollout(&new_rollout) {
+                        actions.push(format!("db error restarting rollout: {}", e));
+                    } else {
+                        actions.push(format!("spec '{}' changed during rollout, restarting", spec.name));
+                    }
+                    continue;
+                }
 
-            for _ in 0..spec.replicas {
-                match schedule_instance(db, spec, &current_hash, nodes, scheduler, next_idx) {
-                    Ok(inst) => {
-                        let cmd = exec::substitute(exec_create_template, &inst.id, &inst.node);
-                        actions.push(format!("create: {} on {} -> {}", inst.id, inst.node, cmd));
+                let new_instances: Vec<&Instance> = instances
+                    .iter()
+                    .filter(|i| i.spec_hash == r.new_hash)
+                    .collect();
 
-                        match exec::run_command(&cmd) {
-                            Ok(true) => {
-                                let mut new_inst = inst;
-                                new_inst.status = "running".into();
-                                if let Err(e) = db.insert_instance(&new_inst) {
-                                    actions.push(format!("db error inserting {}: {}", new_inst.id, e));
-                                } else {
-                                    actions.push(format!("created: {}", new_inst.id));
+                let healthy_new: Vec<&Instance> = new_instances
+                    .iter()
+                    .filter(|i| check_health(i, exec_health_template))
+                    .copied()
+                    .collect();
+
+                match r.phase.as_str() {
+                    "creating" => {
+                        if r.created_count < spec.replicas {
+                            let next_idx = instances.len() as u32;
+                            match schedule_instance(db, spec, &r.new_hash, nodes, scheduler, next_idx) {
+                                Ok(inst) => {
+                                    let cmd = exec::substitute(exec_create_template, &inst.id, &inst.node);
+                                    actions.push(format!("rollout: create {}/{} -> {} on {}",
+                                        r.created_count + 1, spec.replicas, inst.id, inst.node));
+                                    if let Err(e) = exec::run_command(&cmd) {
+                                        actions.push(format!("create error: {}", e));
+                                    } else {
+                                        let mut new_inst = inst;
+                                        new_inst.status = "running".into();
+                                        db.insert_instance(&new_inst).ok();
+                                        db.increment_rollout_count(&r.spec_name).ok();
+                                    }
+                                }
+                                Err(e) => {
+                                    actions.push(format!("schedule error: {}", e));
                                 }
                             }
-                            Ok(false) => {
-                                actions.push(format!("create failed: {}", inst.id));
-                            }
-                            Err(e) => {
-                                actions.push(format!("create error: {}", e));
-                            }
+                        } else {
+                            db.update_rollout_phase(&r.spec_name, "waiting_healthy").ok();
+                            actions.push(format!("rollout: {} instances created, waiting for healthy", r.created_count));
                         }
-                        next_idx += 1;
                     }
-                    Err(e) => {
-                        actions.push(format!("schedule error: {}", e));
-                        break;
+                    "waiting_healthy" => {
+                        if healthy_new.len() as u32 >= spec.replicas {
+                            if let Err(e) = db.update_rollout_phase(&r.spec_name, "draining") {
+                                actions.push(format!("db error: {}", e));
+                            } else {
+                                actions.push(format!("rollout: {} healthy, starting drain of old instances", healthy_new.len()));
+                            }
+                        } else {
+                            actions.push(format!("rollout: waiting ({}/{} healthy)",
+                                healthy_new.len(), spec.replicas));
+                        }
                     }
+                    "draining" => {
+                        if let Some(old) = old_hash_instances.first() {
+                            let cmd = exec::substitute(exec_delete_template, &old.id, &old.node);
+                            actions.push(format!("rollout: drain old {} on {} -> {}", old.id, old.node, cmd));
+                            db.update_instance_status(&old.id, "deleting").ok();
+                            if let Err(e) = exec::run_command(&cmd) {
+                                actions.push(format!("delete error: {}", e));
+                            }
+                            db.delete_instance(&old.id).ok();
+                        } else {
+                            db.update_rollout_phase(&r.spec_name, "complete").ok();
+                            actions.push("rollout: all old instances drained".to_string());
+                        }
+                    }
+                    "complete" => {
+                        db.delete_rollout(&r.spec_name).ok();
+                        actions.push(format!("rollout complete for '{}'", spec.name));
+                    }
+                    _ => {}
                 }
-            }
-
-            for old in &old_hash_instances {
-                let cmd = exec::substitute(exec_delete_template, &old.id, &old.node);
-                actions.push(format!("drain/delete old: {} -> {}", old.id, cmd));
-
-                if let Err(e) = db.update_instance_status(&old.id, "draining") {
-                    actions.push(format!("db error marking {} draining: {}", old.id, e));
-                }
-                if let Err(e) = exec::run_command(&cmd) {
-                    actions.push(format!("delete command error for {}: {}", old.id, e));
-                }
-                if let Err(e) = db.delete_instance(&old.id) {
-                    actions.push(format!("db error deleting {}: {}", old.id, e));
+            } else {
+                let new_rollout = Rollout::new(&spec.name, &current_hash);
+                if let Err(e) = db.insert_rollout(&new_rollout) {
+                    actions.push(format!("db error starting rollout: {}", e));
+                } else {
+                    actions.push(format!("spec '{}' changed ({} old instances), starting rollout",
+                        spec.name, old_hash_instances.len()));
                 }
             }
 
             continue;
+        }
+
+        // If a completed rollout record exists (but no old instances), clean it up
+        if let Ok(Some(rollout)) = db.get_rollout(&spec.name) {
+            if rollout.phase == "complete" {
+                db.delete_rollout(&spec.name).ok();
+            }
         }
 
         let current_count = healthy.len() as u32;
@@ -256,6 +305,17 @@ fn collect_garbage(
             }
             if let Err(e) = db.delete_instance(&inst.id) {
                 actions.push(format!("gc: db error deleting {}: {}", inst.id, e));
+            }
+        }
+    }
+
+    // Also clean up orphaned rollouts
+    for spec_name in orphaned_specs.keys() {
+        if let Ok(Some(_)) = db.get_rollout(spec_name) {
+            if let Err(e) = db.delete_rollout(spec_name) {
+                actions.push(format!("gc: db error deleting rollout for '{}': {}", spec_name, e));
+            } else {
+                actions.push(format!("gc: cleaned up rollout for deleted spec '{}'", spec_name));
             }
         }
     }

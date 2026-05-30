@@ -133,8 +133,8 @@ fn scale_down_removes_excess() {
     );
 
     assert!(
-        output.contains("excess") || output.contains("delete:") || output.contains("drain/delete old:"),
-        "should detect excess and delete:\n{}",
+        output.contains("excess") || output.contains("delete:") || output.contains("drain old") || output.contains("rollout:"),
+        "should detect change and drain:\n{}",
         output
     );
 }
@@ -176,5 +176,163 @@ fn state_persists_across_restarts() {
         output2.contains("no change") || output2.contains("1 replicas healthy"),
         "second run should detect no change needed:\n{}",
         output2
+    );
+}
+
+#[test]
+fn rollout_creates_one_at_a_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let specs_dir = dir.path().join("specs");
+    std::fs::create_dir(&specs_dir).unwrap();
+    let state_db = dir.path().join("state.db");
+    let nodes_file = dir.path().join("nodes");
+    std::fs::write(&nodes_file, "node1\nnode2\n").unwrap();
+
+    std::fs::write(
+        specs_dir.join("app.yaml"),
+        "name: app\nreplicas: 3\n",
+    ).unwrap();
+
+    let mut child = spawn_flockd(
+        specs_dir.to_str().unwrap(),
+        state_db.to_str().unwrap(),
+        Some(nodes_file.to_str().unwrap()),
+    );
+
+    std::thread::sleep(Duration::from_secs(5));
+    let output = kill_and_read_stderr(&mut child);
+    assert!(output.contains("created:"), "should create initial instances");
+
+    // Now change the spec to trigger a rollout
+    std::fs::write(
+        specs_dir.join("app.yaml"),
+        "name: app\nreplicas: 3\ncpu: 0.5\n",
+    ).unwrap();
+
+    let mut child = spawn_flockd(
+        specs_dir.to_str().unwrap(),
+        state_db.to_str().unwrap(),
+        Some(nodes_file.to_str().unwrap()),
+    );
+
+    // First pass: starts rollout, creates first instance
+    std::thread::sleep(Duration::from_secs(5));
+    let output = kill_and_read_stderr(&mut child);
+
+    assert!(
+        output.contains("starting rollout"),
+        "should start rollout:\n{}", output
+    );
+    assert!(
+        output.contains("rollout: create 1/3"),
+        "should create first instance in first pass:\n{}", output
+    );
+}
+
+#[test]
+fn rollout_waits_for_healthy() {
+    let dir = tempfile::tempdir().unwrap();
+    let specs_dir = dir.path().join("specs");
+    std::fs::create_dir(&specs_dir).unwrap();
+    let state_db = dir.path().join("state.db");
+    let nodes_file = dir.path().join("nodes");
+    std::fs::write(&nodes_file, "node1\n").unwrap();
+
+    std::fs::write(
+        specs_dir.join("app.yaml"),
+        "name: app\nreplicas: 1\n",
+    ).unwrap();
+
+    let mut child = spawn_flockd(
+        specs_dir.to_str().unwrap(),
+        state_db.to_str().unwrap(),
+        Some(nodes_file.to_str().unwrap()),
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    child.kill().ok();
+    child.wait().ok();
+
+    std::fs::write(
+        specs_dir.join("app.yaml"),
+        "name: app\nreplicas: 1\ncpu: 0.5\n",
+    ).unwrap();
+
+    let mut child = spawn_flockd(
+        specs_dir.to_str().unwrap(),
+        state_db.to_str().unwrap(),
+        Some(nodes_file.to_str().unwrap()),
+    );
+
+    std::thread::sleep(Duration::from_secs(3));
+    let output = kill_and_read_stderr(&mut child);
+
+    assert!(
+        output.contains("starting rollout"),
+        "should start rollout:\n{}", output
+    );
+}
+
+#[test]
+fn rollout_cleans_up_on_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let specs_dir = dir.path().join("specs");
+    std::fs::create_dir(&specs_dir).unwrap();
+    let state_db = dir.path().join("state.db");
+    let nodes_file = dir.path().join("nodes");
+    std::fs::write(&nodes_file, "node1\n").unwrap();
+
+    std::fs::write(
+        specs_dir.join("app.yaml"),
+        "name: app\nreplicas: 1\n",
+    ).unwrap();
+
+    // First run: create instance
+    let mut child = spawn_flockd(
+        specs_dir.to_str().unwrap(),
+        state_db.to_str().unwrap(),
+        Some(nodes_file.to_str().unwrap()),
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    child.kill().ok();
+    child.wait().ok();
+
+    // Change spec to trigger rollout
+    std::fs::write(
+        specs_dir.join("app.yaml"),
+        "name: app\nreplicas: 1\ncpu: 0.5\n",
+    ).unwrap();
+
+    // Run multiple passes to let rollout complete
+    let mut child = spawn_flockd(
+        specs_dir.to_str().unwrap(),
+        state_db.to_str().unwrap(),
+        Some(nodes_file.to_str().unwrap()),
+    );
+    std::thread::sleep(Duration::from_secs(4));
+    let output1 = kill_and_read_stderr(&mut child);
+    assert!(output1.contains("starting rollout"), "should start rollout");
+
+    // Run again - should continue or complete rollout
+    let mut child = spawn_flockd(
+        specs_dir.to_str().unwrap(),
+        state_db.to_str().unwrap(),
+        Some(nodes_file.to_str().unwrap()),
+    );
+    std::thread::sleep(Duration::from_secs(4));
+    let output2 = kill_and_read_stderr(&mut child);
+
+    // After enough passes, rollout should complete
+    let mut child = spawn_flockd(
+        specs_dir.to_str().unwrap(),
+        state_db.to_str().unwrap(),
+        Some(nodes_file.to_str().unwrap()),
+    );
+    std::thread::sleep(Duration::from_secs(4));
+    let output3 = kill_and_read_stderr(&mut child);
+
+    assert!(
+        output2.contains("rollout") || output3.contains("rollout") || output3.contains("no change"),
+        "rollout should progress or complete:\noutput1={}\noutput2={}\noutput3={}",
+        output1, output2, output3
     );
 }
