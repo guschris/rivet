@@ -56,7 +56,7 @@ flockd: spec 'frontend': 3 replicas healthy (no change)
 ## quickstart
 
 ```bash
-git clone https://github.com/anomalyco/rivet
+git clone https://github.com/guschris/rivet
 cd rivet
 cargo build --release
 export PATH="$PWD/target/release:$PATH"
@@ -78,4 +78,4 @@ Then walk through [docs/quickstart.md](docs/quickstart.md) — a 5-minute hands-
 
 ## license
 
-MIT
+[MIT](LICENSE)
